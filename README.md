@@ -20,7 +20,7 @@ and signs the result with its own workflow.
 | Scanner | Upstream (pinned in `inputs.json`) | Added here |
 |---|---|---|
 | gitleaks | `ghcr.io/gitleaks/gitleaks` | nothing |
-| osv | `ghcr.io/google/osv-scanner` | complete OSV advisory exports for 12 ecosystems at `/opt/cso/scanner-data/osv` |
+| osv | `ghcr.io/google/osv-scanner` | complete OSV advisory exports for 11 ecosystems at `/opt/cso/scanner-data/osv` |
 | semgrep | `docker.io/semgrep/semgrep` | security-category rules from `opengrep/opengrep-rules` at `/policy/catalog/semgrep` |
 | zizmor | `ghcr.io/zizmorcore/zizmor` | nothing |
 | trivy | `ghcr.io/aquasecurity/trivy` (cosign-verified) | vulnerability DB and misconfiguration checks bundle at `/opt/cso/scanner-data/trivy` |
