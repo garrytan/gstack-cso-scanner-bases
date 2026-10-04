@@ -1,0 +1,4 @@
+#!/bin/sh
+# Keep Click's program name (argv[0]) as "schemathesis" when CSO invokes this
+# executable through its fixed /opt/cso/bin/scanner symlink.
+exec /usr/local/bin/schemathesis "$@"

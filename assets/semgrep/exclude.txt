@@ -1,0 +1,1 @@
+terraform.aws.security.aws-ssm-document-logging-issues # internal matching error under semgrep 1.179.0 (2026-10-04)

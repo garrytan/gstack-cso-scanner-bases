@@ -1,0 +1,165 @@
+{
+  "schemaVersion": 1,
+  "scanners": {
+    "gitleaks": {
+      "version": "8.30.1",
+      "executable": "/usr/bin/gitleaks",
+      "upstream": {
+        "source": "ghcr.io/gitleaks/gitleaks:v8.30.1",
+        "index": "ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f",
+        "platforms": {
+          "linux/amd64": "ghcr.io/gitleaks/gitleaks@sha256:b109bc5f8f76a38196a3e413704fc5b9e3c32360bce4e4b603bd6f45b3721dbb",
+          "linux/arm64": "ghcr.io/gitleaks/gitleaks@sha256:6b2d52241f9d176fc59e6e3b026ea52c98f390070587d9475d6ee2bc64941815"
+        },
+        "repository": "https://github.com/gitleaks/gitleaks",
+        "revisionLabel": "83d9cd684c87d95d656c1458ef04895a7f1cbd8e"
+      }
+    },
+    "osv": {
+      "version": "2.6.0",
+      "executable": "/osv-scanner",
+      "upstream": {
+        "source": "ghcr.io/google/osv-scanner:v2.6.0",
+        "index": "ghcr.io/google/osv-scanner@sha256:afd838850ac1a0fcc15ff4a041dc9ba11123c3f0d2666217a5f0fcf9222b55fa",
+        "platforms": {
+          "linux/amd64": "ghcr.io/google/osv-scanner@sha256:b8cc6dc8805bb77fca4ada69c07cfef5a1e07784c22830e0bd49a440aa27d9fe",
+          "linux/arm64": "ghcr.io/google/osv-scanner@sha256:c2abf5e12492e2649b7ecd0475f2646a687480c6008affb153661ea9ea193f57"
+        },
+        "repository": "https://github.com/google/osv-scanner",
+        "revisionLabel": "e840a6e8adb14b7777c78e26cfbf6e2abc1d1fc6"
+      },
+      "assetPath": "/opt/cso/scanner-data/osv"
+    },
+    "semgrep": {
+      "version": "1.179.0",
+      "executable": "/usr/bin/semgrep",
+      "upstream": {
+        "source": "docker.io/semgrep/semgrep:1.179.0",
+        "index": "docker.io/semgrep/semgrep@sha256:93963d9295a366f59e4850127b1550400ee7b388f04fe144e4a1f6325d96e01b",
+        "platforms": {
+          "linux/amd64": "docker.io/semgrep/semgrep@sha256:cab19964e6c93019934252a9cd591d9b27df1e5b5d1734b26f4069ae51c295f8",
+          "linux/arm64": "docker.io/semgrep/semgrep@sha256:ee8a0e7fb93a387d0b44775b98feab140fe5d72830d977a288e3c4b5e3e83da2"
+        },
+        "repository": "https://github.com/semgrep/semgrep",
+        "revisionLabel": "8fa217f125e9c6f815a9ddea80b5b1c4a559ed10",
+        "revisionNote": "Semgrep builds its OSS image from the private semgrep/semgrep-proprietary monorepo; the label names that commit, not the public v1.179.0 tag.",
+        "revisionRepository": "https://github.com/semgrep/semgrep-proprietary"
+      },
+      "assetPath": "/policy/catalog/semgrep"
+    },
+    "zizmor": {
+      "version": "1.30.1",
+      "executable": "/usr/bin/zizmor",
+      "upstream": {
+        "source": "ghcr.io/zizmorcore/zizmor:1.30.1",
+        "index": "ghcr.io/zizmorcore/zizmor@sha256:a2eb396d886c053073405c7a980f2139ba2248ec172243cfa3841e57196e8101",
+        "platforms": {
+          "linux/amd64": "ghcr.io/zizmorcore/zizmor@sha256:f8451d8719580a4489501768c4ea64b161dee94b049e206ba7cbe940d7f7df3d",
+          "linux/arm64": "ghcr.io/zizmorcore/zizmor@sha256:6c439cfad63a89112942048df8f4498fc03cc984bcdb7aa8eb4941f7da15bc60"
+        },
+        "repository": "https://github.com/zizmorcore/zizmor",
+        "revisionLabel": "99a054ed9283c90abdd2d5b9fb5101d27dde9783"
+      }
+    },
+    "trivy": {
+      "version": "0.75.0",
+      "executable": "/usr/local/bin/trivy",
+      "upstream": {
+        "source": "ghcr.io/aquasecurity/trivy:0.75.0",
+        "index": "ghcr.io/aquasecurity/trivy@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa",
+        "platforms": {
+          "linux/amd64": "ghcr.io/aquasecurity/trivy@sha256:9db099105405c648166e6b94155eb32f8da12673cf1f455207f7385cc9a77283",
+          "linux/arm64": "ghcr.io/aquasecurity/trivy@sha256:dad4007121e0f5af0bf67e847d314516411e22bdf6ba996c1aa533ea275df395"
+        },
+        "repository": "https://github.com/aquasecurity/trivy",
+        "revisionLabel": "591e9799316a602e703f0b484f6c6d7b234ec8f3",
+        "cosignIdentity": "https://github.com/aquasecurity/trivy/.github/workflows/reusable-release.yaml@refs/tags/v0.75.0"
+      },
+      "assetPath": "/opt/cso/scanner-data/trivy"
+    },
+    "schemathesis": {
+      "version": "4.29.1",
+      "executable": "/opt/cso-base/bin/schemathesis",
+      "applicationExecutable": "/usr/local/bin/python3",
+      "upstream": {
+        "source": "docker.io/library/python:3.13.4-slim-bookworm",
+        "index": "docker.io/library/python@sha256:9ed09f78253eb4f029f3d99e07c064f138a6f1394932c3807b3d0738a674d33b",
+        "platforms": {
+          "linux/amd64": "docker.io/library/python@sha256:25fab3d7d1d7b2e955f8b39ad49b70e5ddfdc32c202069bd52e34e151eb8704c",
+          "linux/arm64": "docker.io/library/python@sha256:d27f102f1850c0886b0d1df3718a0a31d8e88aae343506e61ef2966ae468abea"
+        },
+        "repository": "https://github.com/schemathesis/schemathesis",
+        "revisionLabel": "6f4c6bba9c59c557e77d08e11dc3a73429b4243c",
+        "package": "PyPI schemathesis==4.29.1 and its hash-locked wheel closure (images/schemathesis/requirements.txt)",
+        "baseNote": "Same reviewed python:3.13.4-slim-bookworm digests gstack's runtime build-inputs.json pins; the upstream Alpine image cannot run gstack's glibc verifier."
+      }
+    }
+  },
+  "sbomGenerator": {
+    "upstream": {
+      "source": "docker.io/docker/buildkit-syft-scanner:1.12.0",
+      "index": "docker.io/docker/buildkit-syft-scanner@sha256:ae4f3b554449e7e25548e7d8ccc029d17357348e30c6e3df01b92bc93654d6a9",
+      "repository": "https://github.com/docker/buildkit-syft-scanner"
+    }
+  },
+  "assets": {
+    "semgrep": {
+      "repository": "https://github.com/opengrep/opengrep-rules",
+      "commit": "f1d2b562b414783763fd02a6ed2736eaed622efa",
+      "license": "LGPL-2.1 with Commons Clause"
+    },
+    "osv": {
+      "bucket": "https://osv-vulnerabilities.storage.googleapis.com",
+      "ecosystems": [
+        "npm",
+        "PyPI",
+        "RubyGems",
+        "Go",
+        "crates.io",
+        "Maven",
+        "Packagist",
+        "NuGet",
+        "Pub",
+        "Hex",
+        "GitHub Actions",
+        "SwiftURL"
+      ]
+    },
+    "trivy": {
+      "dbRepository": "mirror.gcr.io/aquasec/trivy-db:2",
+      "ecosystems": [
+        "alpine",
+        "debian",
+        "ubuntu",
+        "redhat",
+        "npm",
+        "pip",
+        "rubygems",
+        "go",
+        "cargo",
+        "composer",
+        "nuget",
+        "maven",
+        "conan",
+        "pub",
+        "hex",
+        "swift",
+        "cocoapods",
+        "bitnami",
+        "k8s"
+      ],
+      "checksRepository": "mirror.gcr.io/aquasec/trivy-checks:1"
+    }
+  },
+  "hashTool": {
+    "repository": "garrytan/gstack",
+    "commit": "2db0b3adc84b95be08d08bda4f9799ca7fa8665e",
+    "note": "scripts/cso-scanner-catalog.ts hash-asset and scripts/cso-attestation-evidence.ts digest, the exact algorithms gstack re-runs"
+  },
+  "tools": {
+    "syft": "docker.io/anchore/syft@sha256:0356562f495d432056237fbea5cbc2d4839c9c75cd500784a66de2e7cc95ca7c",
+    "cosign": "ghcr.io/sigstore/cosign/cosign@sha256:9e5c2f2edc34351160407ca3416c61855bdf9403c3c5936e0f0be7fc261611b8",
+    "pyyaml": "6.0.3"
+  },
+  "registry": "ghcr.io/garrytan/gstack-cso-scanner-bases"
+}

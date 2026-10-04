@@ -1,0 +1,424 @@
+name: Publish CSO scanner bases
+
+# A pushed bases-* tag publishes one attested base image per scanner and
+# platform plus the attested SBOM generator, then a release carrying the
+# build-inputs.json candidate for garrytan/gstack. Every image is signed by
+# this workflow at the tagged commit; gstack re-verifies that identity.
+on:
+  push:
+    tags: ['bases-*']
+
+permissions: {}
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY_IMAGE: ghcr.io/garrytan/gstack-cso-scanner-bases
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Re-verify every upstream pin against its registry
+        run: scripts/verify-upstream.sh inputs.json
+      - name: Emit the native build matrix
+        id: matrix
+        run: |
+          set -euo pipefail
+          matrix="$(jq -c '{include: [.scanners | to_entries[] as $s | ("linux/amd64", "linux/arm64") as $p |
+            {scanner: $s.key, platform: $p, arch: ($p | sub("linux/"; "")),
+             runner: (if $p == "linux/amd64" then "ubuntu-24.04" else "ubuntu-24.04-arm" end)}]}' inputs.json)"
+          test "$(jq '.include | length' <<<"$matrix")" -eq 12
+          printf 'matrix=%s\n' "$matrix" >> "$GITHUB_OUTPUT"
+
+  assets:
+    needs: plan
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          path: bases
+      - name: Read pinned asset sources
+        id: pins
+        run: |
+          set -euo pipefail
+          printf 'rules_commit=%s\n' "$(jq -er '.assets.semgrep.commit' bases/inputs.json)" >> "$GITHUB_OUTPUT"
+          printf 'gstack_commit=%s\n' "$(jq -er '.hashTool.commit' bases/inputs.json)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: opengrep/opengrep-rules
+          ref: ${{ steps.pins.outputs.rules_commit }}
+          persist-credentials: false
+          path: rules
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: garrytan/gstack
+          ref: ${{ steps.pins.outputs.gstack_commit }}
+          persist-credentials: false
+          path: gstack
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.0
+      - name: Acquire Semgrep rules, OSV and Trivy databases
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet --no-deps --require-hashes --only-binary=:all: -r bases/assets/semgrep/requirements.txt
+          bases/assets/acquire.sh "$PWD/assets" "$PWD/rules" "$RUNNER_TEMP/venv/bin/python"
+      - name: Hash each asset with gstack's own algorithm and describe it
+        run: |
+          set -euo pipefail
+          (cd gstack && bun install --frozen-lockfile --ignore-scripts >/dev/null)
+          hash() { (cd gstack && bun run scripts/cso-scanner-catalog.ts hash-asset "$GITHUB_WORKSPACE/assets/$1"); }
+          jq -n \
+            --arg semgrep "$(hash semgrep)" --arg osv "$(hash osv)" --arg trivy "$(hash trivy)" \
+            --slurpfile inputs bases/inputs.json \
+            --slurpfile osvm assets/osv/manifest.json --slurpfile trivym assets/trivy/manifest.json '
+            {semgrep: {semgrepRules: {path: $inputs[0].scanners.semgrep.assetPath, sha256: $semgrep}},
+             osv: {advisoryDatabase: {path: $inputs[0].scanners.osv.assetPath, contentSha256: $osv,
+                   updatedAt: ($osvm[0].acquiredAt | sub("Z$"; ".000Z")), ecosystems: ($inputs[0].assets.osv.ecosystems | sort)}},
+             trivy: {advisoryDatabase: {path: $inputs[0].scanners.trivy.assetPath, contentSha256: $trivy,
+                   updatedAt: ($trivym[0].dbUpdatedAt | sub("\\.[0-9]+Z$"; ".000Z")), ecosystems: ($inputs[0].assets.trivy.ecosystems | sort)}}}' > assets/assets.json
+          cat assets/assets.json
+          for a in semgrep osv trivy; do tar --zstd -C assets -cf "asset-$a.tar.zst" "$a"; done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: scanner-assets
+          path: |
+            asset-*.tar.zst
+            assets/assets.json
+            assets/osv/manifest.json
+            assets/trivy/manifest.json
+            assets/semgrep/NOTICE.json
+          if-no-files-found: error
+          retention-days: 30
+
+  build:
+    needs: [plan, assets]
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          path: bases
+      - name: Require the declared native architecture
+        env:
+          CSO_ARCH: ${{ matrix.arch }}
+        run: |
+          case "$CSO_ARCH:$(uname -m)" in amd64:x86_64|arm64:aarch64) ;; *) exit 1 ;; esac
+          printf 'gstack_commit=%s\n' "$(jq -er '.hashTool.commit' bases/inputs.json)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: garrytan/gstack
+          ref: ${{ env.gstack_commit }}
+          persist-credentials: false
+          path: gstack
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: scanner-assets
+          path: scanner-assets
+      - name: Prepare the build context and recheck the asset hash
+        id: ctx
+        env:
+          CSO_SCANNER: ${{ matrix.scanner }}
+        run: |
+          set -euo pipefail
+          (cd gstack && bun install --frozen-lockfile --ignore-scripts >/dev/null)
+          s="$(jq -c --arg s "$CSO_SCANNER" '.scanners[$s]' bases/inputs.json)"
+          asset_path="$(jq -r '.assetPath // empty' <<<"$s")"
+          mkdir context
+          if test "$CSO_SCANNER" = schemathesis; then
+            cp -a bases/images/schemathesis/. context/
+            dockerfile=bases/images/schemathesis.Dockerfile
+          elif test -n "$asset_path"; then
+            tar --zstd -C context -xf "scanner-assets/asset-$CSO_SCANNER.tar.zst"
+            mv "context/$CSO_SCANNER" context/asset
+            expected="$(jq -er --arg s "$CSO_SCANNER" '.[$s] | (.semgrepRules.sha256 // .advisoryDatabase.contentSha256)' scanner-assets/assets/assets.json)"
+            actual="$(cd gstack && bun run scripts/cso-scanner-catalog.ts hash-asset "$GITHUB_WORKSPACE/context/asset")"
+            test "$actual" = "$expected"
+            printf 'asset_sha256=%s\n' "$expected" >> "$GITHUB_OUTPUT"
+            dockerfile=bases/images/asset.Dockerfile
+          else
+            dockerfile=bases/images/plain.Dockerfile
+          fi
+          printf 'dockerfile=%s\nasset_path=%s\n' "$dockerfile" "$asset_path" >> "$GITHUB_OUTPUT"
+          printf 'upstream=%s\n' "$(jq -er --arg p '${{ matrix.platform }}' '.upstream.platforms[$p]' <<<"$s")" >> "$GITHUB_OUTPUT"
+          printf 'upstream_repository=%s\nupstream_revision=%s\n' "$(jq -er '.upstream.repository' <<<"$s")" "$(jq -er '.upstream.revisionLabel' <<<"$s")" >> "$GITHUB_OUTPUT"
+          printf 'version=%s\nexecutable=%s\n' "$(jq -er '.version' <<<"$s")" "$(jq -er '.executable' <<<"$s")" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push the native base
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: context
+          file: ${{ steps.ctx.outputs.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            UPSTREAM_IMAGE=${{ steps.ctx.outputs.upstream }}
+            UPSTREAM_REPOSITORY=${{ steps.ctx.outputs.upstream_repository }}
+            UPSTREAM_REVISION=${{ steps.ctx.outputs.upstream_revision }}
+            ASSET_PATH=${{ steps.ctx.outputs.asset_path }}
+            ASSET_SHA256=${{ steps.ctx.outputs.asset_sha256 }}
+          tags: ${{ env.REGISTRY_IMAGE }}:${{ matrix.scanner }}-${{ steps.ctx.outputs.version }}-${{ matrix.arch }}-${{ github.ref_name }}
+          push: true
+          provenance: false
+          sbom: false
+      - name: Smoke-test the pushed digest natively
+        env:
+          CSO_IMAGE: ${{ env.REGISTRY_IMAGE }}@${{ steps.build.outputs.digest }}
+          CSO_EXECUTABLE: ${{ steps.ctx.outputs.executable }}
+          CSO_VERSION: ${{ steps.ctx.outputs.version }}
+          CSO_ASSET_PATH: ${{ steps.ctx.outputs.asset_path }}
+          CSO_ASSET_SHA256: ${{ steps.ctx.outputs.asset_sha256 }}
+        run: |
+          set -euo pipefail
+          docker pull --quiet "$CSO_IMAGE"
+          docker run --rm --network none --user 10001:10001 --env HOME=/tmp --env SEMGREP_ENABLE_VERSION_CHECK=0 --env SEMGREP_SEND_METRICS=off --entrypoint "$CSO_EXECUTABLE" "$CSO_IMAGE" --version | tee version.txt
+          grep -Eq "(^|[ v])${CSO_VERSION//./\\.}([^0-9.]|$)" version.txt
+          if test -n "$CSO_ASSET_PATH"; then
+            c="$(docker create --pull=never "$CSO_IMAGE" /bin/true)"
+            docker cp "$c:$CSO_ASSET_PATH" pushed-asset; docker rm -f "$c" >/dev/null
+            test "$(cd gstack && bun run scripts/cso-scanner-catalog.ts hash-asset "$GITHUB_WORKSPACE/pushed-asset")" = "$CSO_ASSET_SHA256"
+          fi
+      - name: Generate the SPDX SBOM
+        env:
+          CSO_IMAGE: ${{ env.REGISTRY_IMAGE }}@${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$(jq -er '.tools.syft' bases/inputs.json)" \
+            "docker:$CSO_IMAGE" -o spdx-json > sbom.spdx.json
+          jq -e '.spdxVersion == "SPDX-2.3" and (.packages | type == "array" and length > 0)' sbom.spdx.json >/dev/null
+      - name: Sign build provenance
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-name: ${{ env.REGISTRY_IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+      - name: Sign the SBOM
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-name: ${{ env.REGISTRY_IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          sbom-path: sbom.spdx.json
+          push-to-registry: true
+      - name: Verify exactly as gstack will and record statement-set digests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CSO_DIGEST: ${{ steps.build.outputs.digest }}
+          CSO_SCANNER: ${{ matrix.scanner }}
+          CSO_PLATFORM: ${{ matrix.platform }}
+          CSO_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          image="$REGISTRY_IMAGE@$CSO_DIGEST"
+          workflow="github.com/$GITHUB_REPOSITORY/.github/workflows/publish.yml"
+          for p in https://slsa.dev/provenance/v1 https://spdx.dev/Document/v2.3; do
+            gh attestation verify "oci://$image" --repo "$GITHUB_REPOSITORY" --signer-workflow "$workflow" \
+              --signer-digest "$GITHUB_WORKFLOW_SHA" --source-digest "$GITHUB_SHA" --deny-self-hosted-runners \
+              --predicate-type "$p" --format json > "verify-${p##*/}.json"
+          done
+          prov="$(cd gstack && bun run scripts/cso-attestation-evidence.ts digest "$GITHUB_WORKSPACE/verify-v1.json" https://slsa.dev/provenance/v1 "${CSO_DIGEST#sha256:}")"
+          sbom="$(cd gstack && bun run scripts/cso-attestation-evidence.ts digest "$GITHUB_WORKSPACE/verify-v2.3.json" https://spdx.dev/Document/v2.3 "${CSO_DIGEST#sha256:}")"
+          jq -n --arg scanner "$CSO_SCANNER" --arg platform "$CSO_PLATFORM" --arg image "$image" \
+            --arg repository "https://github.com/$GITHUB_REPOSITORY" --arg commit "$GITHUB_SHA" --arg release "$GITHUB_REF_NAME" \
+            --arg workflow "$workflow" --arg signer "$GITHUB_WORKFLOW_SHA" --arg prov "$prov" --arg sbom "$sbom" \
+            '{scanner:$scanner,platform:$platform,evidence:{image:$image,repository:$repository,sourceCommit:$commit,release:$release,signerWorkflow:$workflow,signerDigest:$signer,provenanceStatementDigest:$prov,sbomStatementDigest:$sbom}}' \
+            > "fragment-$CSO_SCANNER-$CSO_ARCH.json"
+          cat "fragment-$CSO_SCANNER-$CSO_ARCH.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: fragment-${{ matrix.scanner }}-${{ matrix.arch }}
+          path: |
+            fragment-${{ matrix.scanner }}-${{ matrix.arch }}.json
+            sbom.spdx.json
+            version.txt
+            verify-*.json
+          if-no-files-found: error
+          retention-days: 30
+
+  sbom-generator:
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          path: bases
+      - name: Read pins
+        id: pins
+        run: |
+          set -euo pipefail
+          printf 'gstack_commit=%s\n' "$(jq -er '.hashTool.commit' bases/inputs.json)" >> "$GITHUB_OUTPUT"
+          printf 'upstream=%s\nupstream_repository=%s\n' "$(jq -er '.sbomGenerator.upstream.index' bases/inputs.json)" "$(jq -er '.sbomGenerator.upstream.repository' bases/inputs.json)" >> "$GITHUB_OUTPUT"
+          mkdir context
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: garrytan/gstack
+          ref: ${{ steps.pins.outputs.gstack_commit }}
+          persist-credentials: false
+          path: gstack
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.0
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Re-publish the generator index (no RUN steps, so no emulation)
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: context
+          file: bases/images/plain.Dockerfile
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            UPSTREAM_IMAGE=${{ steps.pins.outputs.upstream }}
+            UPSTREAM_REPOSITORY=${{ steps.pins.outputs.upstream_repository }}
+            UPSTREAM_REVISION=1.12.0
+          tags: ${{ env.REGISTRY_IMAGE }}:sbom-generator-1.12.0-${{ github.ref_name }}
+          push: true
+          provenance: false
+          sbom: false
+      - name: Generate one SPDX SBOM per platform
+        env:
+          CSO_IMAGE: ${{ env.REGISTRY_IMAGE }}@${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          syft="$(jq -er '.tools.syft' bases/inputs.json)"
+          for arch in amd64 arm64; do
+            docker pull --quiet --platform "linux/$arch" "$CSO_IMAGE"
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$syft" --platform "linux/$arch" "docker:$CSO_IMAGE" -o spdx-json > "sbom-$arch.spdx.json"
+            jq -e '.spdxVersion == "SPDX-2.3" and (.packages | length > 0)' "sbom-$arch.spdx.json" >/dev/null
+          done
+      - name: Sign build provenance
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-name: ${{ env.REGISTRY_IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+      - name: Sign the amd64 SBOM
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-name: ${{ env.REGISTRY_IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          sbom-path: sbom-amd64.spdx.json
+          push-to-registry: true
+      - name: Sign the arm64 SBOM
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-name: ${{ env.REGISTRY_IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          sbom-path: sbom-arm64.spdx.json
+          push-to-registry: true
+      - name: Verify exactly as gstack will and record statement-set digests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CSO_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          (cd gstack && bun install --frozen-lockfile --ignore-scripts >/dev/null)
+          image="$REGISTRY_IMAGE@$CSO_DIGEST"
+          workflow="github.com/$GITHUB_REPOSITORY/.github/workflows/publish.yml"
+          for p in https://slsa.dev/provenance/v1 https://spdx.dev/Document/v2.3; do
+            gh attestation verify "oci://$image" --repo "$GITHUB_REPOSITORY" --signer-workflow "$workflow" \
+              --signer-digest "$GITHUB_WORKFLOW_SHA" --source-digest "$GITHUB_SHA" --deny-self-hosted-runners \
+              --predicate-type "$p" --format json > "verify-${p##*/}.json"
+          done
+          prov="$(cd gstack && bun run scripts/cso-attestation-evidence.ts digest "$GITHUB_WORKSPACE/verify-v1.json" https://slsa.dev/provenance/v1 "${CSO_DIGEST#sha256:}")"
+          sbom="$(cd gstack && bun run scripts/cso-attestation-evidence.ts digest "$GITHUB_WORKSPACE/verify-v2.3.json" https://spdx.dev/Document/v2.3 "${CSO_DIGEST#sha256:}")"
+          jq -n --arg image "$image" --arg repository "https://github.com/$GITHUB_REPOSITORY" --arg commit "$GITHUB_SHA" --arg release "$GITHUB_REF_NAME" \
+            --arg workflow "$workflow" --arg signer "$GITHUB_WORKFLOW_SHA" --arg prov "$prov" --arg sbom "$sbom" \
+            '{image:$image,repository:$repository,sourceCommit:$commit,release:$release,signerWorkflow:$workflow,signerDigest:$signer,provenanceStatementDigest:$prov,sbomStatementDigest:$sbom}' > sbom-generator.json
+          cat sbom-generator.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: sbom-generator
+          path: |
+            sbom-generator.json
+            sbom-*.spdx.json
+            verify-*.json
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    needs: [assets, build, sbom-generator]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          path: bases
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          path: evidence
+      - name: Assemble the gstack build-inputs.json candidate
+        run: |
+          set -euo pipefail
+          jq -s '.' evidence/fragment-*/fragment-*.json > fragments.json
+          test "$(jq length fragments.json)" -eq 12
+          jq -n --slurpfile inputs bases/inputs.json --slurpfile f fragments.json \
+            --slurpfile gen evidence/sbom-generator/sbom-generator.json --slurpfile assets evidence/scanner-assets/assets/assets.json '
+            ($inputs[0].scanners) as $s |
+            {schemaVersion: 1, helperAbi: 3, state: "pending", sbomGenerator: $gen[0],
+             profiles: [ ["gitleaks","osv","semgrep","zizmor","trivy","schemathesis"][] as $id |
+               {scanner: $id, version: $s[$id].version,
+                baseImages: ([$f[0][] | select(.scanner == $id) | {key: .platform, value: .evidence}] | from_entries),
+                executable: $s[$id].executable}
+               + (if $assets[0][$id] then {assets: $assets[0][$id]} else {} end)
+               + (if $s[$id].applicationExecutable then {applicationExecutable: $s[$id].applicationExecutable} else {} end)],
+             instructions: "Add one reviewed, digest-pinned SBOM generator and exactly one profile for each scanner. Every platform image and the generator must declare its GitHub repository, source commit, release, signer workflow and signer digest, plus canonical SLSA and SPDX statement-set digests that the workflow re-verifies cryptographically before use. Semgrep bases must contain the reviewed rules bundle. OSV and Trivy bases must contain the declared offline databases. Change state to reviewed only after all identities and content hashes have been independently checked."}' > build-inputs.json
+          cat build-inputs.json
+      - name: Publish the release with its evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cp evidence/scanner-assets/assets/osv/manifest.json osv-manifest.json
+          cp evidence/scanner-assets/assets/trivy/manifest.json trivy-manifest.json
+          cp evidence/scanner-assets/assets/semgrep/NOTICE.json semgrep-NOTICE.json
+          cp evidence/scanner-assets/assets/assets.json assets.json
+          tar --exclude='*.tar.zst' -czf evidence.tar.gz evidence
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "$GITHUB_REF_NAME" --notes "Attested CSO scanner bases. build-inputs.json is the unreviewed candidate for garrytan/gstack lib/cso/scanner-images/build-inputs.json." \
+            build-inputs.json assets.json osv-manifest.json trivy-manifest.json semgrep-NOTICE.json evidence.tar.gz
