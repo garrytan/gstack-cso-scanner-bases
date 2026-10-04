@@ -215,7 +215,8 @@ jobs:
           CSO_IMAGE: ${{ env.REGISTRY_IMAGE }}@${{ steps.build.outputs.digest }}
         run: |
           set -euo pipefail
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$(jq -er '.tools.syft' bases/inputs.json)" \
+          docker run --rm -e SYFT_FILE_METADATA_SELECTION=none -e SYFT_RELATIONSHIPS_PACKAGE_FILE_OWNERSHIP=false \
+            -v /var/run/docker.sock:/var/run/docker.sock "$(jq -er '.tools.syft' bases/inputs.json)" \
             "docker:$CSO_IMAGE" -o spdx-json > sbom.spdx.json
           jq -e '.spdxVersion == "SPDX-2.3" and (.packages | type == "array" and length > 0)' sbom.spdx.json >/dev/null
       - name: Sign build provenance
@@ -321,12 +322,13 @@ jobs:
       - name: Generate one SPDX SBOM per platform
         env:
           CSO_IMAGE: ${{ env.REGISTRY_IMAGE }}@${{ steps.build.outputs.digest }}
+          SYFT_REGISTRY_AUTH_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           syft="$(jq -er '.tools.syft' bases/inputs.json)"
           for arch in amd64 arm64; do
-            docker pull --quiet --platform "linux/$arch" "$CSO_IMAGE"
-            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$syft" --platform "linux/$arch" "docker:$CSO_IMAGE" -o spdx-json > "sbom-$arch.spdx.json"
+            docker run --rm -e SYFT_FILE_METADATA_SELECTION=none -e SYFT_RELATIONSHIPS_PACKAGE_FILE_OWNERSHIP=false -e SYFT_REGISTRY_AUTH_AUTHORITY=ghcr.io -e SYFT_REGISTRY_AUTH_USERNAME="$GITHUB_ACTOR" -e SYFT_REGISTRY_AUTH_PASSWORD \
+              "$syft" --platform "linux/$arch" "registry:$CSO_IMAGE" -o spdx-json > "sbom-$arch.spdx.json"
             jq -e '.spdxVersion == "SPDX-2.3" and (.packages | length > 0)' "sbom-$arch.spdx.json" >/dev/null
           done
       - name: Sign build provenance

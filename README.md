@@ -43,7 +43,7 @@ Pushing a `bases-*` tag runs `.github/workflows/publish.yml`:
 2. One job acquires the assets once (`assets/acquire.sh`) and hashes them with gstack's
    own `hash-asset` algorithm, so both platforms carry byte-identical content.
 3. Native amd64 and arm64 jobs build each base, smoke-test the scanner version and asset
-   hash from the pushed digest, generate an SPDX SBOM with Syft, attest provenance and
+   hash from the pushed digest, generate a package-level SPDX SBOM with Syft (file ownership omitted so the verified statement stays under gstack's 4 MiB evidence limit), attest provenance and
    SBOM, and verify both exactly as gstack does.
 4. The release attaches a `build-inputs.json` candidate (state `pending`), the asset
    manifests and all verification output.
