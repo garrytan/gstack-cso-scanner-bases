@@ -121,9 +121,9 @@
         "NuGet",
         "Pub",
         "Hex",
-        "GitHub Actions",
         "SwiftURL"
-      ]
+      ],
+      "note": "OSV ecosystem labels must match gstack's identifier pattern (no spaces), so the GitHub Actions export is not bundled; zizmor covers workflow files."
     },
     "trivy": {
       "dbRepository": "mirror.gcr.io/aquasec/trivy-db:2",
